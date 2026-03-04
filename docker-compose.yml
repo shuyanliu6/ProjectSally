@@ -1,0 +1,69 @@
+
+
+services:
+  # PostgreSQL + TimescaleDB Database
+  database:
+    image: timescale/timescaledb:latest-pg15
+    container_name: stock_picking_db
+    environment:
+      POSTGRES_USER: ${DB_USER:-stock_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      POSTGRES_DB: ${DB_NAME:-stock_picking_system}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      # Persistent data storage
+      - postgres_data:/var/lib/postgresql/data
+      # Initialization scripts
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-stock_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stock_network
+    restart: unless-stopped
+
+  # Python Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: application
+    container_name: stock_picking_app
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-stock_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      DB_NAME: ${DB_NAME:-stock_picking_system}
+      DATA_PROVIDER: ${DATA_PROVIDER:-yfinance}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEBUG: ${DEBUG:-True}
+      START_DATE: ${START_DATE:-2015-01-01}
+      END_DATE: ${END_DATE:-2024-12-31}
+    volumes:
+      # Mount source code for development
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./logs:/app/logs
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - stock_network
+    restart: unless-stopped
+    # Override default command for interactive development
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  stock_network:
+    driver: bridge
