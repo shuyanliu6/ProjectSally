@@ -87,7 +87,7 @@ def parse_arguments():
         "--provider",
         type=str,
         default="yfinance",
-        choices=["yfinance", "eodhd"],
+        choices=["yfinance", "eodhd", "massive"],
         help="Data provider",
     )
 
@@ -153,7 +153,21 @@ def main():
         # Initialize components
         config = get_config()
         session = SessionLocal()
-        provider = get_provider(args.provider)
+        
+        # Get provider with appropriate credentials
+        provider_kwargs = {}
+        if args.provider == "massive":
+            if not config.massive_api_key:
+                logger.error("Massive API key not configured. Set MASSIVE_API_KEY in .env")
+                return 1
+            provider_kwargs = {"api_key": config.massive_api_key}
+        elif args.provider == "eodhd":
+            if not config.eodhd_api_key:
+                logger.error("EODHD API key not configured. Set EODHD_API_KEY in .env")
+                return 1
+            provider_kwargs = {"api_key": config.eodhd_api_key}
+        
+        provider = get_provider(args.provider, **provider_kwargs)
         pipeline = DataPipeline(
             provider=provider,
             session=session,

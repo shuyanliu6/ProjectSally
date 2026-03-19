@@ -23,6 +23,8 @@ class Config(BaseSettings):
     eodhd_api_key: Optional[str] = Field(default=None, alias="EODHD_API_KEY")
     polygon_api_key: Optional[str] = Field(default=None, alias="POLYGON_API_KEY")
     alpha_vantage_api_key: Optional[str] = Field(default=None, alias="ALPHA_VANTAGE_API_KEY")
+    massive_api_key: Optional[str] = Field(default=None, alias="MASSIVE_API_KEY")
+    massive_base_url: str = Field(default="https://api.massive.com", alias="MASSIVE_BASE_URL")
 
     # Application Configuration
     environment: str = Field(default="development", alias="ENVIRONMENT")
