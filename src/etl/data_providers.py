@@ -1,85 +1,77 @@
 """Data provider connectors for various sources."""
 
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from datetime import datetime, date, timedelta
+
 import yfinance as yf
 import pandas as pd
 import requests
+
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 class DataProvider(ABC):
-    """Abstract base class for data providers."""
+    """Abstract base class for all data providers."""
 
     @abstractmethod
-    def get_daily_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_daily_prices(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch daily OHLCV data."""
         pass
 
     @abstractmethod
-    def get_dividends(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_dividends(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch dividend history."""
         pass
 
     @abstractmethod
-    def get_splits(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_splits(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch stock split history."""
         pass
 
     @abstractmethod
     def validate_ticker(self, ticker: str) -> bool:
-        """Validate if ticker exists."""
+        """Return True if the ticker exists on this provider."""
         pass
+
+    def get_company_info(self, ticker: str) -> Dict[str, Any]:
+        """
+        Return basic company metadata.
+        Providers that don't support this return a minimal dict with the ticker as name.
+        """
+        return {"name": ticker}
 
 
 class YahooFinanceProvider(DataProvider):
-    """Yahoo Finance data provider using yfinance library."""
+    """Yahoo Finance data provider via the yfinance library."""
 
     def __init__(self):
         self.name = "yfinance"
-        self.base_url = "https://finance.yahoo.com"
 
-    def get_daily_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_daily_prices(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch daily OHLCV data from Yahoo Finance."""
         try:
             logger.info(f"Fetching daily prices for {ticker} from {start_date} to {end_date}")
-            
+
             data = yf.download(
                 ticker,
                 start=start_date,
                 end=end_date,
                 progress=False,
-                auto_adjust=False,  # Keep unadjusted prices
+                auto_adjust=False,
             )
-            
+
             if data.empty:
-                logger.warning(f"No data found for ticker {ticker}")
+                logger.warning(f"No data returned for {ticker}")
                 return pd.DataFrame()
-            
-            # Rename columns to match our schema
+
+            # FIX: newer yfinance versions return MultiIndex columns for single tickers.
+            # Flatten to a regular Index so the rename below works reliably.
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+
             data = data.rename(columns={
                 "Open": "open_price",
                 "High": "high_price",
@@ -88,120 +80,96 @@ class YahooFinanceProvider(DataProvider):
                 "Adj Close": "adj_close_price",
                 "Volume": "volume",
             })
-            
-            # Reset index to make date a column
-            data = data.reset_index()
-            data = data.rename(columns={"Date": "date"})
-            
-            # Convert date to date object
+
+            data = data.reset_index().rename(columns={"Date": "date"})
             data["date"] = pd.to_datetime(data["date"]).dt.date
-            
-            # Add metadata
             data["data_source"] = self.name
             data["is_adjusted"] = False
-            
-            logger.info(f"Successfully fetched {len(data)} records for {ticker}")
+
+            logger.info(f"Fetched {len(data)} records for {ticker}")
             return data
-            
+
         except Exception as e:
             logger.error(f"Error fetching daily prices for {ticker}: {e}")
             return pd.DataFrame()
 
-    def get_dividends(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_dividends(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch dividend history from Yahoo Finance."""
         try:
             logger.info(f"Fetching dividends for {ticker}")
-            
+
             stock = yf.Ticker(ticker)
             dividends = stock.dividends
-            
+
             if dividends.empty:
                 logger.info(f"No dividends found for {ticker}")
                 return pd.DataFrame()
-            
-            # Filter by date range
+
             dividends = dividends[
-                (dividends.index.date >= start_date) & 
+                (dividends.index.date >= start_date) &
                 (dividends.index.date <= end_date)
             ]
-            
-            # Create DataFrame
+
             df = pd.DataFrame({
                 "ex_date": dividends.index.date,
                 "dividend_amount": dividends.values,
                 "dividend_type": "regular",
                 "data_source": self.name,
             })
-            
-            logger.info(f"Successfully fetched {len(df)} dividend records for {ticker}")
+
+            logger.info(f"Fetched {len(df)} dividend records for {ticker}")
             return df
-            
+
         except Exception as e:
             logger.error(f"Error fetching dividends for {ticker}: {e}")
             return pd.DataFrame()
 
-    def get_splits(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_splits(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch stock split history from Yahoo Finance."""
         try:
             logger.info(f"Fetching splits for {ticker}")
-            
+
             stock = yf.Ticker(ticker)
             splits = stock.splits
-            
+
             if splits.empty:
                 logger.info(f"No splits found for {ticker}")
                 return pd.DataFrame()
-            
-            # Filter by date range
+
             splits = splits[
-                (splits.index.date >= start_date) & 
+                (splits.index.date >= start_date) &
                 (splits.index.date <= end_date)
             ]
-            
-            # Create DataFrame
+
             df = pd.DataFrame({
                 "split_date": splits.index.date,
                 "split_ratio": splits.values,
                 "split_type": "split",
                 "data_source": self.name,
             })
-            
-            logger.info(f"Successfully fetched {len(df)} split records for {ticker}")
+
+            logger.info(f"Fetched {len(df)} split records for {ticker}")
             return df
-            
+
         except Exception as e:
             logger.error(f"Error fetching splits for {ticker}: {e}")
             return pd.DataFrame()
 
     def validate_ticker(self, ticker: str) -> bool:
-        """Validate if ticker exists on Yahoo Finance."""
+        """Return True if the ticker is known to Yahoo Finance."""
         try:
-            stock = yf.Ticker(ticker)
-            # Try to get info to validate ticker exists
-            info = stock.info
+            info = yf.Ticker(ticker).info
             return bool(info and "symbol" in info)
         except Exception as e:
             logger.warning(f"Ticker validation failed for {ticker}: {e}")
             return False
 
     def get_company_info(self, ticker: str) -> Dict[str, Any]:
-        """Get company information."""
+        """Fetch company metadata from Yahoo Finance."""
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
+            info = yf.Ticker(ticker).info
             return {
-                "name": info.get("longName", ""),
+                "name": info.get("longName", ticker),
                 "sector": info.get("sector", ""),
                 "industry": info.get("industry", ""),
                 "country": info.get("country", "US"),
@@ -209,7 +177,7 @@ class YahooFinanceProvider(DataProvider):
             }
         except Exception as e:
             logger.error(f"Error fetching company info for {ticker}: {e}")
-            return {}
+            return {"name": ticker}
 
 
 class MassiveDataProvider(DataProvider):
@@ -220,280 +188,194 @@ class MassiveDataProvider(DataProvider):
         self.api_key = api_key
         self.base_url = base_url
         self.session = requests.Session()
-        logger.info(f"Initialized Massive data provider with base URL: {base_url}")
+        logger.info(f"Initialized Massive provider at {base_url}")
 
     def validate_ticker(self, ticker: str) -> bool:
-        """Validate if ticker exists."""
+        """Validate ticker by attempting a small recent fetch."""
         try:
-            # Try to fetch recent data to validate ticker
             today = datetime.now().date()
             five_days_ago = today - timedelta(days=5)
-            
             url = (
                 f"{self.base_url}/v2/aggs/ticker/{ticker}/range/1/day/"
-                f"{five_days_ago.strftime('%Y-%m-%d')}/{today.strftime('%Y-%m-%d')}"
+                f"{five_days_ago}/{today}"
             )
-            params = {"apiKey": self.api_key, "limit": 1}
-            response = self.session.get(url, params=params, timeout=5)
-            
+            response = self.session.get(url, params={"apiKey": self.api_key, "limit": 1}, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                # Accept both OK and DELAYED status
-                is_valid = data.get("status") in ["OK", "DELAYED"] and bool(data.get("results"))
-                return is_valid
+                return data.get("status") in ["OK", "DELAYED"] and bool(data.get("results"))
             return False
         except Exception as e:
             logger.warning(f"Ticker validation failed for {ticker}: {e}")
             return False
 
-    def get_company_info(self, ticker: str) -> Dict[str, Any]:
-        """Get company information."""
-        try:
-            # Massive API doesn't have a direct company info endpoint
-            # Return basic info with ticker as name
-            return {"name": ticker}
-        except Exception as e:
-            logger.error(f"Error fetching company info for {ticker}: {e}")
-            return {"name": ticker}
-
-    def get_daily_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_daily_prices(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch daily OHLCV data from Massive API."""
         try:
             logger.info(f"Fetching daily prices for {ticker} from {start_date} to {end_date}")
-            
-            # Construct the endpoint URL
+
             url = (
                 f"{self.base_url}/v2/aggs/ticker/{ticker}/range/1/day/"
-                f"{start_date.strftime('%Y-%m-%d')}/{end_date.strftime('%Y-%m-%d')}"
+                f"{start_date}/{end_date}"
             )
-            
-            params = {
-                "apiKey": self.api_key,
-                "adjusted": "true",
-                "sort": "asc",
-                "limit": 50000,
-            }
-            
+            params = {"apiKey": self.api_key, "adjusted": "true", "sort": "asc", "limit": 50000}
             response = self.session.get(url, params=params, timeout=30)
             data = response.json()
-            
-            # Check for authorization errors
+
             if data.get("status") == "NOT_AUTHORIZED":
-                logger.warning(
-                    f"API authorization error for {ticker}: {data.get('message')}. "
-                    f"Your plan may not include historical data access."
-                )
+                logger.warning(f"Not authorized for {ticker}: {data.get('message')}")
                 return pd.DataFrame()
-            
-            # Check for other errors
+
             if data.get("status") not in ["OK", "DELAYED"] or not data.get("results"):
-                logger.info(f"No data found for {ticker} from {start_date} to {end_date}")
+                logger.info(f"No data for {ticker} ({start_date} to {end_date})")
                 return pd.DataFrame()
-            
-            all_bars = []
+
+            rows = []
             for bar in data["results"]:
-                # Convert millisecond timestamp to date
-                timestamp_ms = bar.get("t", 0)
-                bar_date = datetime.fromtimestamp(timestamp_ms / 1000).date()
-                
-                all_bars.append({
+                bar_date = datetime.fromtimestamp(bar["t"] / 1000).date()
+                rows.append({
                     "date": bar_date,
                     "open_price": bar.get("o"),
                     "high_price": bar.get("h"),
                     "low_price": bar.get("l"),
                     "close_price": bar.get("c"),
-                    "adj_close_price": bar.get("c"),  # Massive already adjusts
+                    "adj_close_price": bar.get("c"),  # Massive pre-adjusts
                     "volume": int(bar.get("v", 0)),
                     "is_adjusted": True,
                     "data_source": self.name,
                 })
-            
-            df = pd.DataFrame(all_bars)
-            logger.info(f"Successfully fetched {len(df)} records for {ticker} from Massive")
+
+            df = pd.DataFrame(rows)
+            logger.info(f"Fetched {len(df)} records for {ticker} from Massive")
             return df
-            
+
         except Exception as e:
             logger.error(f"Error fetching daily prices for {ticker} from Massive: {e}")
             return pd.DataFrame()
 
-    def get_splits(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_splits(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch stock split history from Massive API."""
         try:
             logger.info(f"Fetching splits for {ticker}")
-            
             url = f"{self.base_url}/v3/reference/splits"
-            
-            params = {
-                "apiKey": self.api_key,
-                "ticker": ticker,
-                "limit": 1000,
-            }
-            
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(
+                url,
+                params={"apiKey": self.api_key, "ticker": ticker, "limit": 1000},
+                timeout=10,
+            )
             response.raise_for_status()
-            
             data = response.json()
-            
-            splits = []
+
+            rows = []
             if data.get("status") == "OK" and data.get("results"):
                 for split in data["results"]:
-                    split_date = split.get("execution_date")
-                    
-                    # Filter by date range
-                    if split_date:
-                        split_date_obj = datetime.strptime(split_date, "%Y-%m-%d").date()
-                        if not (start_date <= split_date_obj <= end_date):
-                            continue
-                    
-                    split_to = split.get("split_to", 1)
-                    split_from = split.get("split_from", 1)
-                    
-                    splits.append({
-                        "split_date": split_date,
-                        "split_ratio": split_to / split_from,
+                    split_date_str = split.get("execution_date")
+                    if not split_date_str:
+                        continue
+                    split_date_obj = datetime.strptime(split_date_str, "%Y-%m-%d").date()
+                    if not (start_date <= split_date_obj <= end_date):
+                        continue
+                    rows.append({
+                        "split_date": split_date_obj,
+                        "split_ratio": split.get("split_to", 1) / split.get("split_from", 1),
+                        "split_type": "split",
                         "data_source": self.name,
                     })
-            
-            df = pd.DataFrame(splits) if splits else pd.DataFrame()
-            logger.info(f"Successfully fetched {len(df)} split records for {ticker}")
+
+            df = pd.DataFrame(rows) if rows else pd.DataFrame()
+            logger.info(f"Fetched {len(df)} split records for {ticker}")
             return df
-            
+
         except Exception as e:
             logger.error(f"Error fetching splits for {ticker} from Massive: {e}")
             return pd.DataFrame()
 
-    def get_dividends(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
+    def get_dividends(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         """Fetch dividend history from Massive API."""
         try:
             logger.info(f"Fetching dividends for {ticker}")
-            
             url = f"{self.base_url}/v3/reference/dividends"
-            
-            params = {
-                "apiKey": self.api_key,
-                "ticker": ticker,
-                "limit": 1000,
-            }
-            
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(
+                url,
+                params={"apiKey": self.api_key, "ticker": ticker, "limit": 1000},
+                timeout=10,
+            )
             response.raise_for_status()
-            
             data = response.json()
-            
-            dividends = []
+
+            rows = []
             if data.get("status") == "OK" and data.get("results"):
-                # Sort results by ex_dividend_date in descending order
                 results = sorted(
-                    data.get("results", []),
+                    data["results"],
                     key=lambda x: x.get("ex_dividend_date", ""),
-                    reverse=True
+                    reverse=True,
                 )
                 for div in results:
-                    ex_date = div.get("ex_dividend_date")
-                    
-                    # Filter by date range
-                    if ex_date:
-                        ex_date_obj = datetime.strptime(ex_date, "%Y-%m-%d").date()
-                        if not (start_date <= ex_date_obj <= end_date):
-                            continue
-                    
-                    dividends.append({
-                        "ex_date": ex_date,
+                    ex_date_str = div.get("ex_dividend_date")
+                    if not ex_date_str:
+                        continue
+                    ex_date_obj = datetime.strptime(ex_date_str, "%Y-%m-%d").date()
+                    if not (start_date <= ex_date_obj <= end_date):
+                        continue
+                    rows.append({
+                        "ex_date": ex_date_obj,
                         "dividend_amount": float(div.get("cash_amount", 0)),
                         "dividend_type": div.get("dividend_type", "regular"),
                         "data_source": self.name,
                     })
-            
-            df = pd.DataFrame(dividends) if dividends else pd.DataFrame()
-            logger.info(f"Successfully fetched {len(df)} dividend records for {ticker}")
+
+            df = pd.DataFrame(rows) if rows else pd.DataFrame()
+            logger.info(f"Fetched {len(df)} dividend records for {ticker}")
             return df
-            
+
         except Exception as e:
             logger.error(f"Error fetching dividends for {ticker} from Massive: {e}")
             return pd.DataFrame()
 
 
 class EODHDProvider(DataProvider):
-    """EODHD data provider (placeholder for future implementation)."""
+    """EODHD data provider — placeholder for future implementation."""
 
     def __init__(self, api_key: str):
         self.name = "eodhd"
         self.api_key = api_key
         self.base_url = "https://eodhd.com/api"
 
-    def get_daily_prices(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
-        """Fetch daily prices from EODHD."""
-        # TODO: Implement EODHD API integration
+    def get_daily_prices(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         logger.info("EODHD provider not yet implemented")
         return pd.DataFrame()
 
-    def get_dividends(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
-        """Fetch dividends from EODHD."""
-        # TODO: Implement EODHD API integration
+    def get_dividends(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         logger.info("EODHD provider not yet implemented")
         return pd.DataFrame()
 
-    def get_splits(
-        self,
-        ticker: str,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
-        """Fetch splits from EODHD."""
-        # TODO: Implement EODHD API integration
+    def get_splits(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         logger.info("EODHD provider not yet implemented")
         return pd.DataFrame()
 
     def validate_ticker(self, ticker: str) -> bool:
-        """Validate ticker on EODHD."""
-        # TODO: Implement EODHD API integration
         return False
 
 
 def get_provider(provider_name: str, **kwargs) -> DataProvider:
-    """Factory function to get data provider instance."""
-    provider_name = provider_name.lower()
-    
-    if provider_name == "yfinance":
+    """Factory — return the correct DataProvider for the given name."""
+    name = provider_name.lower()
+
+    if name == "yfinance":
         return YahooFinanceProvider()
-    
-    elif provider_name == "massive":
-        api_key = kwargs.get("api_key", "")
-        base_url = kwargs.get("base_url", "https://api.massive.com")
-        if not api_key:
-            raise ValueError("Massive API key is required")
-        return MassiveDataProvider(api_key=api_key, base_url=base_url)
-    
-    elif provider_name == "eodhd":
+
+    if name == "massive":
         api_key = kwargs.get("api_key", "")
         if not api_key:
-            raise ValueError("EODHD API key is required")
+            raise ValueError("Massive provider requires an api_key")
+        return MassiveDataProvider(
+            api_key=api_key,
+            base_url=kwargs.get("base_url", "https://api.massive.com"),
+        )
+
+    if name == "eodhd":
+        api_key = kwargs.get("api_key", "")
+        if not api_key:
+            raise ValueError("EODHD provider requires an api_key")
         return EODHDProvider(api_key=api_key)
-    
-    else:
-        raise ValueError(f"Unknown provider: {provider_name}")
+
+    raise ValueError(f"Unknown provider: {provider_name!r}")

@@ -2,10 +2,10 @@
 Configuration management for Project Sally.
 """
 
+from functools import lru_cache
 from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from datetime import datetime
 
 
 class Config(BaseSettings):
@@ -35,9 +35,11 @@ class Config(BaseSettings):
     start_date: str = Field(default="2015-01-01", alias="START_DATE")
     end_date: str = Field(default="2024-12-31", alias="END_DATE")
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": False,
+        "populate_by_name": True,
+    }
 
     @property
     def database_url(self) -> str:
@@ -58,6 +60,10 @@ class Config(BaseSettings):
         return self.environment.lower() == "development"
 
 
+@lru_cache(maxsize=1)
 def get_config() -> Config:
-    """Get application configuration."""
+    """
+    Get application configuration.
+    Cached so .env is only read once per process lifetime.
+    """
     return Config()

@@ -12,7 +12,7 @@ Tables:
 
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, Date, Boolean, Text,
-    ForeignKey, Index, UniqueConstraint, CheckConstraint, event
+    ForeignKey, Index, UniqueConstraint, CheckConstraint, event, text  # FIX: added text import
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -58,7 +58,7 @@ class Asset(Base):
 class DailyPrice(Base):
     """
     Daily OHLCV data - optimized as TimescaleDB hypertable.
-    
+
     This table will be converted to a hypertable for efficient time-series queries.
     """
 
@@ -73,7 +73,7 @@ class DailyPrice(Base):
     close_price = Column(Float, nullable=False)
     adj_close_price = Column(Float, nullable=False)  # Adjusted for splits/dividends
     volume = Column(Integer, nullable=False)
-    
+
     # Data quality flags
     is_adjusted = Column(Boolean, default=False, nullable=False)
     data_source = Column(String(50), nullable=False)  # yfinance, eodhd, etc.
@@ -153,23 +153,23 @@ class Fundamental(Base):
     asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False, index=True)
     fiscal_date = Column(Date, nullable=False)  # End of fiscal period
     period_type = Column(String(10), nullable=False)  # Q1, Q2, Q3, Q4, FY
-    
+
     # Income Statement
     revenue = Column(Float, nullable=True)
     net_income = Column(Float, nullable=True)
     operating_income = Column(Float, nullable=True)
-    
+
     # Balance Sheet
     total_assets = Column(Float, nullable=True)
     total_liabilities = Column(Float, nullable=True)
     shareholders_equity = Column(Float, nullable=True)
-    
+
     # Ratios
     pe_ratio = Column(Float, nullable=True)
     pb_ratio = Column(Float, nullable=True)
     roe = Column(Float, nullable=True)  # Return on Equity
     debt_to_equity = Column(Float, nullable=True)
-    
+
     data_source = Column(String(50), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -211,7 +211,7 @@ class MarketDataMetadata(Base):
         return f"<MarketDataMetadata(asset_id={self.asset_id}, data_type={self.data_type})>"
 
 
-# Event listener to create TimescaleDB hypertable for daily_prices
+# FIX: text was missing from imports — this event listener would have crashed at runtime
 @event.listens_for(Base.metadata, "after_create")
 def create_hypertable(target, connection, tables, **kw):
     """Convert daily_prices table to TimescaleDB hypertable after creation."""
@@ -219,7 +219,7 @@ def create_hypertable(target, connection, tables, **kw):
         try:
             connection.execute(
                 text("""
-                    SELECT create_hypertable('daily_prices', by_range('date'), 
+                    SELECT create_hypertable('daily_prices', by_range('date'),
                     if_not_exists => TRUE);
                 """)
             )

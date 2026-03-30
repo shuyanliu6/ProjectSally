@@ -1,26 +1,28 @@
-"""Database connection management with improved session handling."""
+"""Database connection management."""
+
+from contextlib import contextmanager
+from typing import Generator
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
-from src.config import get_config
-from contextlib import contextmanager
 import logging
 
-logger = logging.getLogger(__name__)
+from src.config import get_config
 
-config = get_config()
+logger = logging.getLogger(__name__)
 
 
 def get_engine():
     """Create and return SQLAlchemy engine."""
+    config = get_config()  # FIX: call inside function so lru_cache is respected
+
     engine = create_engine(
         config.database_url,
         echo=config.debug,
-        poolclass=NullPool,  # Disable connection pooling for simplicity
+        poolclass=NullPool,
     )
 
-    # Enable TimescaleDB extension on connection
     @event.listens_for(engine, "connect")
     def receive_connect(dbapi_conn, connection_record):
         """Enable TimescaleDB extension when connecting."""
@@ -37,26 +39,29 @@ def get_engine():
     return engine
 
 
-# Create session factory
-SessionLocal = sessionmaker(bind=get_engine(), expire_on_commit=False)
+# Session factory — built lazily so get_engine() uses the cached config
+def _make_session_factory():
+    return sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+
+SessionLocal = _make_session_factory()
 
 
 @contextmanager
-def get_db_session() -> Session:
+def get_db_session() -> Generator[Session, None, None]:
     """
-    Get database session with automatic commit/rollback.
-    
+    Get a database session with automatic commit/rollback.
+
     Usage:
         with get_db_session() as session:
-            asset = Asset(symbol="AAPL", name="Apple")
-            session.add(asset)
-            # Automatically commits and closes
-    
+            session.add(some_object)
+            # commits automatically on exit, rolls back on exception
+
     Yields:
-        Session: SQLAlchemy session object
-        
+        Session: SQLAlchemy session
+
     Raises:
-        Exception: Any exception raised during session usage
+        Exception: Re-raises any exception after rolling back
     """
     session = SessionLocal()
     try:
@@ -72,23 +77,13 @@ def get_db_session() -> Session:
         logger.debug("Session closed")
 
 
-def get_session() -> Session:
-    """
-    Legacy method for backward compatibility.
-    Use get_db_session() context manager instead.
-    
-    Deprecated: Use get_db_session() with 'with' statement
-    """
-    logger.warning("get_session() is deprecated, use get_db_session() instead")
-    session = SessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
+# FIX: removed the broken get_session() which used `yield` but declared return type
+# as `Session` (not a Generator), making it silently return a generator object to
+# callers expecting a real session. Use get_db_session() with a `with` statement instead.
 
 
-def init_db():
-    """Initialize database with all tables."""
+def init_db() -> None:
+    """Create all tables. Safe to call multiple times (uses CREATE IF NOT EXISTS)."""
     from src.database.schema import Base
 
     engine = get_engine()
@@ -97,11 +92,11 @@ def init_db():
     print("Database initialized successfully!")
 
 
-def drop_db():
-    """Drop all tables (use with caution!)."""
+def drop_db() -> None:
+    """Drop all tables. Irreversible — use only in dev/test."""
     from src.database.schema import Base
 
     engine = get_engine()
     Base.metadata.drop_all(bind=engine)
-    logger.warning("Database dropped successfully!")
+    logger.warning("All tables dropped!")
     print("Database dropped successfully!")

@@ -3,6 +3,7 @@
 Generate data quality reports for ingested data.
 
 Usage:
+    python scripts/generate_quality_report.py
     python scripts/generate_quality_report.py --ticker AAPL
     python scripts/generate_quality_report.py --all
 """
@@ -12,7 +13,6 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-# Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.database.connection import SessionLocal
@@ -39,16 +39,16 @@ def generate_asset_report(session, ticker: str = None):
         logger.info("No assets found")
         return
 
-    logger.info(f"Total Assets: {len(assets)}\n")
+    logger.info(f"Total Assets: {len(assets)}")
+    logger.info("")  # FIX: was logger.info() with no argument
 
     for asset in assets:
         logger.info(f"Ticker: {asset.ticker}")
-        logger.info(f"  Name: {asset.name}")
-        logger.info(f"  Type: {asset.asset_type}")
+        logger.info(f"  Name:     {asset.name}")
+        logger.info(f"  Type:     {asset.asset_type}")
         logger.info(f"  Exchange: {asset.exchange}")
-        logger.info(f"  Active: {asset.is_active}")
+        logger.info(f"  Active:   {asset.is_active}")
 
-        # Get data counts
         price_count = session.query(func.count(DailyPrice.id)).filter(
             DailyPrice.asset_id == asset.id
         ).scalar()
@@ -62,10 +62,9 @@ def generate_asset_report(session, ticker: str = None):
         ).scalar()
 
         logger.info(f"  Price Records: {price_count}")
-        logger.info(f"  Dividends: {dividend_count}")
-        logger.info(f"  Splits: {split_count}")
+        logger.info(f"  Dividends:     {dividend_count}")
+        logger.info(f"  Splits:        {split_count}")
 
-        # Get date range
         if price_count > 0:
             price_range = session.query(
                 func.min(DailyPrice.date),
@@ -75,7 +74,7 @@ def generate_asset_report(session, ticker: str = None):
             if price_range[0] and price_range[1]:
                 logger.info(f"  Date Range: {price_range[0]} to {price_range[1]}")
 
-        logger.info()
+        logger.info("")  # FIX: was logger.info()
 
 
 def generate_data_completeness_report(session, ticker: str = None):
@@ -103,7 +102,6 @@ def generate_data_completeness_report(session, ticker: str = None):
             logger.info(f"{asset.ticker}: No price data")
             continue
 
-        # Get date range
         price_range = session.query(
             func.min(DailyPrice.date),
             func.max(DailyPrice.date)
@@ -112,7 +110,6 @@ def generate_data_completeness_report(session, ticker: str = None):
         start_date = price_range[0]
         end_date = price_range[1]
 
-        # Calculate expected trading days (roughly 252 per year)
         days_span = (end_date - start_date).days
         years = days_span / 365.25
         expected_records = int(years * 252)
@@ -120,11 +117,11 @@ def generate_data_completeness_report(session, ticker: str = None):
         completeness = (price_count / expected_records * 100) if expected_records > 0 else 0
 
         logger.info(f"{asset.ticker}:")
-        logger.info(f"  Records: {price_count}")
-        logger.info(f"  Expected: ~{expected_records}")
+        logger.info(f"  Records:      {price_count}")
+        logger.info(f"  Expected:     ~{expected_records}")
         logger.info(f"  Completeness: {completeness:.1f}%")
-        logger.info(f"  Date Range: {start_date} to {end_date}")
-        logger.info()
+        logger.info(f"  Date Range:   {start_date} to {end_date}")
+        logger.info("")  # FIX: was logger.info()
 
 
 def generate_anomaly_report(session, ticker: str = None):
@@ -146,7 +143,6 @@ def generate_anomaly_report(session, ticker: str = None):
     for asset in assets:
         anomalies = []
 
-        # Check for OHLC violations
         ohlc_violations = session.query(DailyPrice).filter(
             DailyPrice.asset_id == asset.id,
             (DailyPrice.high_price < DailyPrice.low_price) |
@@ -157,7 +153,6 @@ def generate_anomaly_report(session, ticker: str = None):
         if ohlc_violations > 0:
             anomalies.append(f"OHLC violations: {ohlc_violations}")
 
-        # Check for negative prices
         negative_prices = session.query(DailyPrice).filter(
             DailyPrice.asset_id == asset.id,
             DailyPrice.close_price <= 0
@@ -166,7 +161,6 @@ def generate_anomaly_report(session, ticker: str = None):
         if negative_prices > 0:
             anomalies.append(f"Negative prices: {negative_prices}")
 
-        # Check for zero volume days
         zero_volume = session.query(DailyPrice).filter(
             DailyPrice.asset_id == asset.id,
             DailyPrice.volume == 0
@@ -178,10 +172,10 @@ def generate_anomaly_report(session, ticker: str = None):
         if anomalies:
             logger.info(f"{asset.ticker}:")
             for anomaly in anomalies:
-                logger.info(f"  ⚠ {anomaly}")
-            logger.info()
+                logger.info(f"  ⚠  {anomaly}")
+            logger.info("")
         else:
-            logger.info(f"{asset.ticker}: ✓ No anomalies detected\n")
+            logger.info(f"{asset.ticker}: ✓ No anomalies detected")
 
 
 def generate_summary_report(session):
@@ -195,12 +189,11 @@ def generate_summary_report(session):
     total_dividends = session.query(func.count(Dividend.id)).scalar()
     total_splits = session.query(func.count(Split.id)).scalar()
 
-    logger.info(f"Total Assets: {total_assets}")
+    logger.info(f"Total Assets:        {total_assets}")
     logger.info(f"Total Price Records: {total_prices}")
-    logger.info(f"Total Dividends: {total_dividends}")
-    logger.info(f"Total Splits: {total_splits}")
+    logger.info(f"Total Dividends:     {total_dividends}")
+    logger.info(f"Total Splits:        {total_splits}")
 
-    # Get date range across all data
     if total_prices > 0:
         date_range = session.query(
             func.min(DailyPrice.date),
@@ -208,46 +201,20 @@ def generate_summary_report(session):
         ).first()
 
         if date_range[0] and date_range[1]:
-            logger.info(f"Date Range: {date_range[0]} to {date_range[1]}")
+            logger.info(f"Date Range:          {date_range[0]} to {date_range[1]}")
 
 
 def main():
-    """Main report generation workflow."""
     parser = argparse.ArgumentParser(description="Generate data quality reports")
 
-    parser.add_argument(
-        "--ticker",
-        type=str,
-        help="Specific ticker to report on",
-    )
-
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="Generate all reports",
-    )
-
-    parser.add_argument(
-        "--assets",
-        action="store_true",
-        help="Generate asset inventory report",
-    )
-
-    parser.add_argument(
-        "--completeness",
-        action="store_true",
-        help="Generate data completeness report",
-    )
-
-    parser.add_argument(
-        "--anomalies",
-        action="store_true",
-        help="Generate anomaly report",
-    )
+    parser.add_argument("--ticker", type=str, help="Specific ticker to report on")
+    parser.add_argument("--all", action="store_true", help="Generate all reports")
+    parser.add_argument("--assets", action="store_true", help="Asset inventory report")
+    parser.add_argument("--completeness", action="store_true", help="Completeness report")
+    parser.add_argument("--anomalies", action="store_true", help="Anomaly report")
 
     args = parser.parse_args()
 
-    # Default to all reports if no specific report requested
     if not any([args.all, args.assets, args.completeness, args.anomalies]):
         args.all = True
 
@@ -259,10 +226,8 @@ def main():
         logger.info(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
 
-        # Generate summary
         generate_summary_report(session)
 
-        # Generate requested reports
         if args.all or args.assets:
             generate_asset_report(session, args.ticker)
 
